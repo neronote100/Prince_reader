@@ -1,6 +1,11 @@
 name: Collect Discord conversations
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/collect.yml'
+      - 'requests/collect.json'
   schedule:
     # Daily around 08:17 Japan time. GitHub may delay scheduled runs.
     - cron: '17 23 * * *'
@@ -11,8 +16,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   collect:
-    # Set this repository variable after adding all secrets.
-    if: vars.ENABLE_DISCORD_SYNC == 'true'
+    # User approved scheduled and on-demand encrypted collection.
+    # Optional pause switch: ENABLE_DISCORD_SYNC=false.
+    if: vars.ENABLE_DISCORD_SYNC != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
