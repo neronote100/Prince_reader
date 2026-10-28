@@ -64,7 +64,7 @@ GitHubのこのリポジトリで Settings → Secrets and variables → Actions
 {"guild_id":"1556547789180108800","channel_ids":["1557866851252445204","1563563489442664529","1557228324370124830"]}
 ```
 
-続いて同じActions設定の Variables → New repository variable で、ENABLE_DISCORD_SYNC を true として登録します。
+追加の有効化変数の登録は不要です。停止したいときだけ Variables で ENABLE_DISCORD_SYNC を false に設定します。
 
 リポジトリの Actions → Collect Discord conversations → Run workflow から最初の実行をします。成功すると encrypted-discord-snapshot という暗号化ファイルをダウンロードできます。毎朝8時17分ごろ（日本時間）にも実行します。時刻はGitHubの混雑で遅れる場合があります。一定期間活動がない公開リポジトリではGitHubが定期実行を停止することがあります。
 
@@ -85,3 +85,10 @@ Pythonを実行できる手元の環境で、依存関係をインストール�
 ## 実装の確認範囲
 
 ローカルで同期処理・対象制限・暗号化/復号をテストしています。Botの認証情報は未登録のため、実Discordへの接続と実際の記事候補の抽出は未実施です。GitHubへのコード配置だけでMCP接続が自動登録されるわけではありません。
+
+
+## チャットから随時取得する
+
+「Discordを今取得して」と依頼すると、Codexはrequests/collect.jsonを作成または更新して取得を起動できます。このファイルには取得依頼の日時だけを記録し、会話本文やトークンは入れません。同じ内容では実行されないため、毎回依頼日時を変えます。実行後はActionsの最新取得ジョブと暗号化ファイルの作成結果を確認します。GitHubの実行待ちにより、完了まで時間がかかる場合があります。
+
+GitHub画面のRun workflowからも手動取得できます。取得の起動と、復号して記事候補を分析する操作は別です。暗号化パスワードはチャットに渡さないでください。
