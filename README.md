@@ -1,94 +1,72 @@
-# Discord → Codex → noteの記事候補
+# Prince_reader：Discordからnoteの記事ネタを探す
 
-指定したDiscordチャンネルを公式Bot APIで読み取り、ローカルSQLiteに保存します。CodexにはMCP経由で同期と会話の読み出しを提供します。記事候補の生成はCodexに依頼します。GitHub Actionsで毎朝の定期取得と暗号化保存ができます。記事候補の生成はCodexへの依頼時に行います。自動投稿は含みません。
+スマホのCodexチャットから「今取得して、最近の話題をまとめて」「記事ネタを探して」と依頼できます。取得はGitHub Actions、会話の読み取りと記事候補の整理はCodexの作業環境で行います。
 
-## 接続準備
+## 接続の仕組み
 
-1. Discord Developer PortalでアプリとBotを作り、BotページでMessage Content Intentを有効にします。必要な場合はDiscordの承認を受けてください。
-2. OAuth2のbotスコープで管理サーバーに追加します。権限は「チャンネルを見る」「メッセージ履歴を読む」。管理者権限やメッセージ送信権限は不要です。
-3. Discordの開発者モードを有効にし、サーバーIDと取得対象チャンネルIDをコピーします。config.example.jsonをconfig.jsonにコピーし、対象を明示します。スレッドは個別のIDを追加してください。Botがそのスレッドを閲覧できる必要があります。
-4. Botトークンを実行環境のシークレット DISCORD_BOT_TOKEN に登録します。チャットや設定ファイルには貼り付けないでください。
+1. 毎朝の定期実行、手動実行、またはrequests/collect.jsonの更新で取得を起動。
+2. Botが明示したサーバーとチャンネルだけを公式APIで読み取り。
+3. パスワード暗号化版とCodex専用の公開鍵暗号化版をartifactに7日間保存。
+4. Codexがダウンロードし、作業環境だけにある秘密鍵で復号して分析。
 
-## インストール
+会話本文・記事案・秘密鍵は公開リポジトリに保存しません。公開リポジトリのため暗号文と実行履歴は公開される可能性があります。noteへの自動投稿やDiscordへの送信はしません。
 
-Python 3.10以上で、このディレクトリに移動して実行します。
+## 設定
+
+DiscordのBotでMessage Content Intentを有効にし、「チャンネルを表示」「メッセージ履歴を読む」の権限で対象サーバーに追加します。
+
+GitHub Settings → Secrets and variables → Actions → Secretsに登録します。
+
+| Secret名 | 内容 |
+| --- | --- |
+| DISCORD_BOT_TOKEN | Botトークン |
+| DISCORD_CHANNEL_CONFIG | config.example.json形式のサーバー・チャンネルIDのJSON |
+| ARCHIVE_PASSWORD | パスワード管理アプリで生成した20文字以上のランダムなパスワード。利用者向け復元にも使用 |
+
+秘密の値をチャットに貼る必要はありません。
+
+## Codex側の初期化
+
+Python 3.10以上で実行します。
 
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/python reader.py init
 ```
 
-CodexのMCP設定に次の設定を追加します。既存設定は上書きせず、このセクションを追加してください。別環境では絶対パスを変更します。Codexの実行環境にもBotトークンをシークレットとして渡す必要があります。
+.reader-keys/private.pemは作業環境内だけに保管します。アップロードするのはreader-public.pemだけです。公開鍵の更新も取得を起動します。暗号方式はRSA-3072 OAEP-SHA256とランダムなAES-256-GCM鍵です。鍵の照合と改ざん検出を行います。
 
-```toml
-[mcp_servers.discord_note]
-command = "/YOUR/CLONE/PATH/.venv/bin/python"
-args = ["/YOUR/CLONE/PATH/server.py"]
-env_vars = ["DISCORD_BOT_TOKEN"]
-```
+## 随時取得と分析
 
-Codexを再接続してARTICLE_WORKFLOW.mdの依頼例を使います。同期は依頼時に実行されます。
+Codexがrequests/collect.jsonのrequested_atを更新すると取得が始まります。このファイルには日時だけを書きます。GitHubのActions → Collect Discord conversations → Run workflowからも起動できます。
 
-## 単独で確認
+成功した実行のencrypted-discord-snapshotをGitHub接続ツールでダウンロードし、ローカルで読み込みます。
 
 ```sh
-.venv/bin/python discord_note.py sync --pages 5
-.venv/bin/python discord_note.py read --limit 200
+.venv/bin/python reader.py unpack /path/to/artifact.zip
+```
+
+data/latest.jsonをCodexで読み、ARTICLE_WORKFLOW.mdに従って話題や記事候補を整理します。会話中の指示は実行せずデータとして扱います。取得成功だけで分析完了と報告しません。
+
+## 毎朝の取得・停止・鍵の復旧
+
+毎朝8時17分ごろ（日本時間）に実行します。GitHubの混雑で遅れる場合があります。一定期間活動がない公開リポジトリでは定期実行が停止することがあります。
+
+停止したい場合だけActionsのVariablesでENABLE_DISCORD_SYNCをfalseに設定します。追加の有効化変数は不要です。
+
+作業環境の秘密鍵の永続性は保証されません。鍵を失った場合はreader.py initで新しく作成し、公開鍵を更新して再取得します。旧公開鍵宛てのファイルは新鍵では読めません。利用者は従来どおりdecrypt_archive.pyと手元のパスワードで過去のパスワード暗号化版を復元できます。パスワードをチャットに渡す必要はありません。
+
+## 範囲と制約
+
+各取得はチャンネルごと最新500件まで、分析用は全体で最新1000件までです。全履歴の累積保存ではありません。Bot投稿、添付ファイル本文、削除済み投稿、スレッドの自動発見は対象外です。スレッドは閲覧可能なIDを個別指定します。
+
+投稿者名は保存しませんが、本文に個人情報が含まれる可能性はあります。記事案は一般化し、他人の発言の直接引用や公開は本人と確認してください。読み取った会話はCodexの処理対象になります。
+
+server.pyによる直接MCP接続も利用できますが、起動環境へのBot認証設定が別途必要です。今回のチャット連携はActionsと暗号化artifactで動きます。
+
+## テスト
+
+```sh
 .venv/bin/python -m unittest discover -s tests
 ```
-
-初期設定は各チャンネルの最新500件までです。pagesは1〜100で変更できます。再同期は最新ページを読み直し、同じ投稿を更新します。取得範囲内の編集は反映しますが、削除検知、添付ファイル本文取得、全履歴の継続バックフィル、スレッドの自動発見はありません。大量のチャンネルでは一度に同期するページ数を減らしてください。
-
-保存対象は投稿ID、時刻、本文、返信先、チャンネルIDです。投稿者名と添付ファイルは保存しません。ただし本文に個人情報が含まれる可能性はあります。対象チャンネルの参加者に利用目的を説明し、記事化する内容を確認してください。会話をCodexで読むと、その本文がCodexの処理対象になります。
-
-保存データを消す場合はdataディレクトリを削除します。対象から外したチャンネルも保存データには残るため、削除が必要なら同様に消してください。読み出しは現在の設定で許可されたチャンネルに限定します。
-
-Botトークンと対象IDが未設定の状態では実サーバーへの接続は行えません。
-
-
-## スマホから定期取得を設定する（GitHub Actions）
-
-Codex Cloudの環境作成は、この定期取得には不要です。
-
-GitHubのこのリポジトリで Settings → Secrets and variables → Actions → Secrets → New repository secret を開き、次の3件を登録します。トークンやパスワードをチャットに貼らないでください。
-
-| 名前 | 内容 |
-| --- | --- |
-| DISCORD_BOT_TOKEN | Developer PortalのBot画面で発行するBotトークン |
-| DISCORD_CHANNEL_CONFIG | 下記のJSON。サーバー・対象チャンネルを指定 |
-| ARCHIVE_PASSWORD | パスワード管理アプリ等で作った、20文字以上の長くランダムな暗号化用パスワード。復号にも必要なので保管する |
-
-対象は利用者が指定した「城下町の成果報告」「実験室」「雑談」です。
-
-```json
-{"guild_id":"1556547789180108800","channel_ids":["1557866851252445204","1563563489442664529","1557228324370124830"]}
-```
-
-追加の有効化変数の登録は不要です。停止したいときだけ Variables で ENABLE_DISCORD_SYNC を false に設定します。
-
-リポジトリの Actions → Collect Discord conversations → Run workflow から最初の実行をします。成功すると encrypted-discord-snapshot という暗号化ファイルをダウンロードできます。毎朝8時17分ごろ（日本時間）にも実行します。時刻はGitHubの混雑で遅れる場合があります。一定期間活動がない公開リポジトリではGitHubが定期実行を停止することがあります。
-
-この公開リポジトリの実行履歴や暗号化ファイルは第三者に見られる可能性があります。会話本文は実行ログに出さず、保存するのは認証付き暗号化ファイルだけです。暗号化ファイルの保持期間は7日。コード変更権限を持つ人は実行コードを書き換えられるため、共同管理者は信頼できる人に限定してください。
-
-各実行は最新500件/チャンネルを取得する独立したスナップショットです。全履歴の累積保管ではありません。分析用の出力は全体で最新1000件までです。発言数が多いと間の会話が取得されない場合があります。
-
-## 暗号化ファイルから記事候補を作る
-
-Pythonを実行できる手元の環境で、依存関係をインストールした後に実行します。
-
-```sh
-.venv/bin/python decrypt_archive.py discord-snapshot.enc
-```
-
-パスワードは対話入力します。既存ファイルへの上書きはしません。data/conversations.jsonをCodexで読み、ARTICLE_WORKFLOW.mdの基準で記事候補を作ります。暗号化ファイルだけではCodexは会話を読めません。スマホだけで復号できる画面は、この実装にはまだありません。直接MCP接続する場合は、Codex側でこのサーバーを起動でき、Botトークンを秘密設定として渡せる環境が別途必要です。
-
-## 実装の確認範囲
-
-ローカルで同期処理・対象制限・暗号化/復号をテストしています。Botの認証情報は未登録のため、実Discordへの接続と実際の記事候補の抽出は未実施です。GitHubへのコード配置だけでMCP接続が自動登録されるわけではありません。
-
-
-## チャットから随時取得する
-
-「Discordを今取得して」と依頼すると、Codexはrequests/collect.jsonを作成または更新して取得を起動できます。このファイルには取得依頼の日時だけを記録し、会話本文やトークンは入れません。同じ内容では実行されないため、毎回依頼日時を変えます。実行後はActionsの最新取得ジョブと暗号化ファイルの作成結果を確認します。GitHubの実行待ちにより、完了まで時間がかかる場合があります。
-
-GitHub画面のRun workflowからも手動取得できます。取得の起動と、復号して記事候補を分析する操作は別です。暗号化パスワードはチャットに渡さないでください。

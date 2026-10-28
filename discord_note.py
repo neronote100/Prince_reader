@@ -58,11 +58,13 @@ def sync(max_pages=5):
         raise ValueError('max_pages must be between 1 and 100')
     cfg = config()
     count = 0
+    channel_info = []
     with database() as db:
         for channel in map(str, cfg['channel_ids']):
             meta = request(f'channels/{channel}')
             if str(meta.get('guild_id')) != str(cfg['guild_id']):
                 raise ValueError('A channel does not belong to the configured server')
+            channel_info.append({'id': channel, 'name': meta.get('name', channel)})
             before = None
             for _ in range(max_pages):
                 query = {'limit': 100}
@@ -82,7 +84,7 @@ def sync(max_pages=5):
                 before = min((row['id'] for row in rows), key=int)
                 if len(rows) < 100:
                     break
-    return {'processed': count, 'scope': 'Newest configured pages only; deletion tracking and automatic thread discovery are not included.'}
+    return {'processed': count, 'channels': channel_info, 'scope': 'Newest configured pages only; deletion tracking and automatic thread discovery are not included.'}
 
 
 def read_messages(limit=200):

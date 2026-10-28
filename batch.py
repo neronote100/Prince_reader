@@ -2,6 +2,7 @@
 import json
 import os
 import secrets
+from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -33,11 +34,19 @@ def main():
     # Validate the complete allowlist before any network requests.
     from discord_note import config
     config()
-    sync(max_pages=5)
+    summary = sync(max_pages=5)
     messages = read_messages(limit=1000)
     output = ROOT / 'output'
     output.mkdir(mode=0o700, exist_ok=True)
     (output / 'discord-snapshot.enc').write_bytes(encrypt(json.dumps(messages, ensure_ascii=False).encode(), password))
+    public_path = ROOT / 'reader-public.pem'
+    if public_path.exists():
+        from reader_crypto import seal
+        snapshot = {'captured_at': datetime.now(timezone.utc).isoformat(),
+                    'channels': summary.get('channels', []), 'messages': messages,
+                    'limits': {'pages_per_channel': 5, 'maximum_messages': 1000,
+                               'note': 'Snapshot, not complete history. Bot messages and attachments excluded.'}}
+        (output / 'codex-snapshot.enc').write_bytes(seal(json.dumps(snapshot, ensure_ascii=False).encode(), public_path.read_bytes()))
     print('Encrypted snapshot created. Conversation text was not printed.')
 
 

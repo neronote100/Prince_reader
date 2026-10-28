@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/collect.yml'
       - 'requests/collect.json'
+      - 'reader-public.pem'
   schedule:
     # Daily around 08:17 Japan time. GitHub may delay scheduled runs.
     - cron: '17 23 * * *'
@@ -40,7 +41,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: encrypted-discord-snapshot
-          path: output/discord-snapshot.enc
+          path: |
+            output/discord-snapshot.enc
+            output/codex-snapshot.enc
           if-no-files-found: error
           retention-days: 7
       - name: Remove local plaintext and encrypted copy
