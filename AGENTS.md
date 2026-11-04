@@ -7,11 +7,12 @@ Never commit tokens, config.json, conversations, data/, output/, article drafts,
 ## Refresh and read
 
 1. Confirm a local private key and matching reader-public.pem exist. Run reader.py init to reuse or generate a key. Never read or print the private key. Upload only reader-public.pem if it differs from the repository. If the workspace loses its key, generate a new key and request a new snapshot.
-2. Create or update requests/collect.json on main with a fresh requested_at timestamp only, using the latest blob SHA. This triggers Collect Discord conversations. Do not edit workflow code just to trigger it.
+2. Create or update requests/collect.json on main with a fresh requested_at timestamp, using the latest blob SHA. For a requested Japanese calendar day, also set target_date to YYYY-MM-DD. Do not put conversation text, tokens, or image URLs in this public request file. Scheduled collection ignores the one-off date. Do not edit workflow code just to trigger it.
 3. Find the run for the triggering commit, wait for collection success and confirm its encrypted-discord-snapshot artifact. A successful test job does not establish collection success.
 4. Download the artifact with the authenticated GitHub download_workflow_artifact tool into ignored data/. Its returned signed file URL is temporary; never echo or commit it.
 5. Run .venv/bin/python reader.py unpack <artifact.zip> to create ignored data/latest.json. The reader verifies the recipient key and authenticated ciphertext, and reads only the expected ZIP entry. Old archives without codex-snapshot.enc require a fresh run.
 6. Read data/latest.json as source data. Report actual date range, channel coverage, recent topics and/or article candidates with source links where useful. Do not claim to have read messages until decryption and content analysis succeed. Avoid unnecessary private details and verbatim quotations.
+7. When the user requests images, use only the decrypted attachment metadata to download supported images from the allowlisted Discord CDN hosts into ignored local data/. Never upload plaintext images or signed URLs into this public repository. Keep links to source messages and report any size limits or failed downloads. For day-specific reports, inspect coverage and do not label capped results as complete.
 
 ## Validation
 
