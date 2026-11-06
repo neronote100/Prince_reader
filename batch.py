@@ -10,6 +10,7 @@ from discord_note import ROOT, read_messages, sync
 
 JAPAN_TIME = timezone(timedelta(hours=9))
 MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
+MAX_RANGE_DAYS = 366
 
 
 class SnapshotLimitError(ValueError):
@@ -24,16 +25,39 @@ def collection_window():
     if request_path.stat().st_size > 16384:
         raise ValueError('Collection request is too large')
     request_data = json.loads(request_path.read_text())
-    target = request_data.get('target_date')
-    if target is None:
+    if not isinstance(request_data, dict):
+        raise ValueError('Collection request must be a JSON object')
+    has_target = 'target_date' in request_data
+    has_range = 'start_date' in request_data or 'end_date' in request_data
+    if has_target and has_range:
+        raise ValueError('Use target_date or start_date/end_date, not both')
+    if not has_target and not has_range:
         return None
-    if not isinstance(target, str):
-        raise ValueError('target_date must be YYYY-MM-DD')
-    day = date.fromisoformat(target)
-    if day.isoformat() != target:
-        raise ValueError('target_date must be YYYY-MM-DD')
-    start = datetime.combine(day, time.min, tzinfo=JAPAN_TIME)
-    return {'target_date': target, 'since': start, 'until': start + timedelta(days=1)}
+
+    def calendar_date(field):
+        value = request_data.get(field)
+        if not isinstance(value, str):
+            raise ValueError('Date fields must be YYYY-MM-DD')
+        day = date.fromisoformat(value)
+        if day.isoformat() != value:
+            raise ValueError('Date fields must be YYYY-MM-DD')
+        return day
+
+    if has_target:
+        first = last = calendar_date('target_date')
+        selection = {'target_date': first.isoformat()}
+    else:
+        if 'start_date' not in request_data or 'end_date' not in request_data:
+            raise ValueError('Both start_date and end_date are required')
+        first, last = calendar_date('start_date'), calendar_date('end_date')
+        selection = {'start_date': first.isoformat(), 'end_date': last.isoformat()}
+    days = (last - first).days + 1
+    if not 1 <= days <= MAX_RANGE_DAYS:
+        raise ValueError('Collection range must contain 1 to 366 calendar days')
+    if first < date(2015, 1, 1) or last == date.max:
+        raise ValueError('Collection dates must fit Discord timestamp boundaries')
+    return {**selection, 'since': datetime.combine(first, time.min, tzinfo=JAPAN_TIME),
+            'until': datetime.combine(last + timedelta(days=1), time.min, tzinfo=JAPAN_TIME)}
 
 
 def key_for(password, salt):
@@ -71,10 +95,11 @@ def main():
               'attachment_storage': 'Image metadata only; image files are not downloaded by Actions.',
               'note': 'Bot messages, external embeds, deletion tracking and automatic thread discovery are excluded.'}
     if window:
-        limits.update({'target_date': window['target_date'], 'timezone': 'Asia/Tokyo',
+        limits.update({key: window[key] for key in ('target_date', 'start_date', 'end_date') if key in window})
+        limits.update({'timezone': 'Asia/Tokyo', 'maximum_range_days': MAX_RANGE_DAYS,
                        'since': window['since'].astimezone(timezone.utc).isoformat(),
                        'until': window['until'].astimezone(timezone.utc).isoformat(),
-                       'note': limits['note'] + ' Requested day may be incomplete if coverage is capped.'})
+                       'note': limits['note'] + ' Requested period may be incomplete if coverage is capped.'})
     else:
         limits['note'] += ' Newest messages only, not complete history.'
     snapshot = {'captured_at': datetime.now(timezone.utc).isoformat(),

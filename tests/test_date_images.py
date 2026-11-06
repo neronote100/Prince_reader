@@ -175,6 +175,44 @@ class DateImageTests(unittest.TestCase):
         self.assertEqual(window['since'].astimezone(timezone.utc), self.start)
         self.assertEqual(window['until'].astimezone(timezone.utc), self.end)
 
+    def test_period_includes_both_japanese_calendar_dates(self):
+        self.request_file({'start_date': '2026-11-04', 'end_date': '2026-11-06'})
+        window = batch.collection_window()
+        self.assertEqual(window['since'].astimezone(timezone.utc), self.start)
+        self.assertEqual(window['until'].astimezone(timezone.utc), self.end + timedelta(days=2))
+        self.assertNotIn('target_date', window)
+        self.request_file({'start_date': '2026-11-04', 'end_date': '2026-11-04'})
+        self.assertEqual(batch.collection_window()['until'].astimezone(timezone.utc), self.end)
+
+    def test_period_requires_both_dates_and_rejects_conflicting_modes(self):
+        for value in ({'start_date': '2026-11-04'}, {'end_date': '2026-11-04'},
+                      {'target_date': '2026-11-04', 'start_date': '2026-11-04', 'end_date': '2026-11-05'},
+                      {'target_date': None, 'start_date': '2026-11-04', 'end_date': '2026-11-05'}):
+            self.request_file(value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                batch.collection_window()
+
+    def test_period_dates_are_strict_and_ordered(self):
+        for first, last in [('20261104', '2026-11-05'), ('2026-11-04', '20261105'),
+                            ('2026-11-31', '2026-12-01'), ('2026-11-04', None),
+                            ('2026-11-05', '2026-11-04'), ('2026-11-04T00:00:00', '2026-11-05')]:
+            self.request_file({'start_date': first, 'end_date': last})
+            with self.subTest(first=first, last=last), self.assertRaises(ValueError):
+                batch.collection_window()
+
+    def test_period_allows_366_days_but_not_367(self):
+        self.request_file({'start_date': '2024-01-01', 'end_date': '2024-12-31'})
+        window = batch.collection_window()
+        self.assertEqual((window['until'] - window['since']).days, 366)
+        self.request_file({'start_date': '2024-01-01', 'end_date': '2025-01-01'})
+        with self.assertRaises(ValueError):
+            batch.collection_window()
+
+    def test_scheduled_job_ignores_even_invalid_period_request(self):
+        self.request_file({'start_date': 'invalid'})
+        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule'}):
+            self.assertIsNone(batch.collection_window())
+
     def test_scheduled_job_ignores_retained_date(self):
         self.request_file({'target_date': '2026-11-04'})
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule'}):
@@ -226,6 +264,21 @@ class DateImageTests(unittest.TestCase):
         read.assert_called_once_with(limit=1000)
         snapshot = json.loads(seal.call_args.args[0])
         self.assertEqual(snapshot['limits']['pages_per_channel'], 5)
+        self.assertNotIn('target_date', snapshot['limits'])
+
+    def test_period_batch_preserves_limits_and_coverage(self):
+        self.request_file({'start_date': '2026-11-04', 'end_date': '2026-11-06'})
+        coverage = {'complete': False, 'channels': [{'id': '2', 'capped': True}]}
+        sync, read, seal = self.run_batch(summary={'channels': [{'id': '2'}], 'coverage': coverage})
+        window = batch.collection_window()
+        sync.assert_called_once_with(max_pages=100, since=window['since'], until=window['until'])
+        read.assert_called_once_with(limit=None, since=window['since'], until=window['until'])
+        snapshot = json.loads(seal.call_args.args[0])
+        self.assertEqual(snapshot['limits']['start_date'], '2026-11-04')
+        self.assertEqual(snapshot['limits']['end_date'], '2026-11-06')
+        self.assertEqual(snapshot['limits']['maximum_messages'], 30000)
+        self.assertEqual(snapshot['limits']['maximum_range_days'], 366)
+        self.assertEqual(snapshot['coverage'], coverage)
         self.assertNotIn('target_date', snapshot['limits'])
 
     def test_oversized_snapshot_fails_before_writing_archives(self):
